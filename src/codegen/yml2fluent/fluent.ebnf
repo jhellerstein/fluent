@@ -1,0 +1,59 @@
+@@grammar::FLUENT
+
+start = rule $ ;
+
+rule = lhs:catalog_entry mtype:merge rhs:rhs ';' ;
+
+catalog_entry::string = /\w+/ ;
+
+merge 
+    = 
+    | '<='
+    | '<+'
+    | '<~'
+    | '<-'
+    ;
+
+rhs
+    =
+    | anchor:catalog_entry '|' ~ chain:opchain
+    | chain:opchain
+    | anchor:catalog_entry
+    ;
+
+opchain 
+    = '|'%{op}+;
+
+
+op = opname:opname plist:[template_params] '(' op_args:[op_args] ')';
+
+opname
+    =
+    | 'where'
+    | 'project'
+    | 'map'
+    | 'join'
+    | 'cross'
+    | 'groupby'
+    ;
+
+template_params = '<' params:','%{/[\w ]+/}+ '>';
+
+op_args
+    =
+    | argname:/\w+/ code:codeblock
+    | ','%{catitem:catalog_entry}+
+    ;
+
+codeblock = "```" lang:lang code:code "```";
+
+code = /[^'```']+/;
+
+lang = 
+    | 'C++'
+    | 'c++'
+    | 'C'
+    | 'c'
+    | 'Python'
+    | 'python'
+    ;
