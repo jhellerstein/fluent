@@ -1,0 +1,85 @@
+@@grammar::FLUENT
+
+# start = [schema] [bootstrap] [logic] $ ;
+
+start = @:logic ';' $ ;
+
+logic 
+#    = ';'%{@+:ruledef}+ ;
+   =
+   | @:ruledef ';' @:logic
+   | ruledef
+   ;
+
+ruledef = var:rulename ':' rule:rule ;
+
+rulename = /\w+/ ;
+
+rule = lhs:lhs mtype:merge rhs:rhs ;
+
+lhs = catalog_entry;
+
+catalog_entry::string = /\w+/ ;
+
+merge 
+    = 
+    | now
+    | next
+    | async
+    | delete
+    ;
+
+now = '<=';
+next = '<+';
+async = '<~';
+delete = '<-';
+
+rhs
+    =
+    | anchor:rhs_catalog_entry '.' ~ chain:opchain
+    | chain:opchain
+    | anchor:rhs_catalog_entry
+    ;
+
+rhs_catalog_entry = catalog_entry;
+
+opchain 
+    = '.'%{@+:op}+;
+
+
+op = opname:opname plist:[template_params] '(' op_args:[op_args] ')';
+
+opname
+    =
+    | where
+    | 'project'
+    | 'map'
+    | cross
+    | 'join'
+    | 'groupby'
+    ;
+
+where = 'where';
+
+cross = 'cross';
+
+template_params = '<' ','%{@+:/[\w ]+/}+ '>';
+
+op_args
+    =
+    | argname:/\w+/ code:codeblock
+    | ','%{@:rhs_catalog_entry}+
+    ;
+
+codeblock = "```" lang:lang code:code "```";
+
+code = /[^'```']+/;
+
+lang = 
+    | 'C++'
+    | 'c++'
+    | 'C'
+    | 'c'
+    | 'Python'
+    | 'python'
+    ;

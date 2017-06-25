@@ -24,9 +24,9 @@ preload:
     - (args.server_address, args.address, args.nickname)
 
 bloom:
-  from_in: mcast <= fluin | map(line ```c++
+  from_in: mcast <= fluin.map(line ```c++
               {
                 return std::make_tuple(args.server_address,
                                        std::get<0>(line));
               }```);
-  to_out: fluout <= mcast | project<1>();
+  to_out: fluout <= mcast.project<1>();

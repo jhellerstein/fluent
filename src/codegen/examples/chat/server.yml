@@ -19,5 +19,5 @@ schema:
       nickname: std::string             
 
 bloom:
-  subscribe: nodelist <= connect | project<1, 2>();
-  multicast: mcast <= cross(mcast, nodelist) | project<2, 1>();
+  subscribe: nodelist <= connect.project<1, 2>();
+  multicast: mcast <= cross(mcast, nodelist).project<2, 1>();

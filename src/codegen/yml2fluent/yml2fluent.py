@@ -66,8 +66,71 @@ import tempfile
 from sys import stdout
 from collections import defaultdict,OrderedDict
 import pprint
-from itertools import chain
 import tatsu
+
+class BloomSemantics(object):
+  """docstring for BloomSemantics"""
+  def logic(self, ast):
+    return ''.join(ast)
+
+  def ruledef(self, ast):
+    return ast.var + " = " + ast.rule + ';\n'
+
+  def rule(self, ast):
+    return ast.lhs + ' ' + ast.mtype + ' ' + ast.rhs
+
+  def catalog_entry(self, ast, type):
+    return(''.join(ast))
+
+  def rhs(self, ast):
+    retval = "("
+    if ast.anchor != None:
+      retval += ast.anchor
+      if ast.chain != None:
+        retval += ' | '
+    if ast.chain != None:
+      retval += ' | '.join(ast.chain)
+    return retval + ")"
+    
+  def op(self, ast):
+    retval = ast.opname
+    if ast.plist != None:
+      retval += "<" + ','.join(ast.plist) + ">"
+    retval += "("
+    if type(ast.op_args) == list:
+      retval += ', '.join(ast.op_args)
+    elif ast.op_args != None:
+      retval += '[&]'
+      retval += '(const '
+      retval += 'auto'
+      retval += '& ' + ast.op_args.argname + ')'
+      retval += ast.op_args.code.code
+    retval += ')'
+    return(retval)
+
+  def opname(self, ast):
+    return "lra::" + ast
+
+  def rhs_catalog_entry(self, ast):
+    return self.cwrap + "(&" + ast + ")"
+
+  def where(self, ast):
+    return "filter"
+
+  def cross(self, ast):
+    return "make_cross"
+
+  def now(self, ast):
+    return "<="
+
+  def next(self, ast):
+    return "+="
+
+  def async(self, ast):
+    return "<="
+
+  def delete(self, ast):
+    return "-="  
 
 # https://stackoverflow.com/a/21912744/7333257
 def ordered_load(stream, Loader=yaml.Loader, object_pairs_hook=OrderedDict):
@@ -173,7 +236,6 @@ def extract_table_name(tdef):
 
 def arglist_tablenames(tables):
   """generate typed C++ method argument list for table names.
-  Need to handle `stdin()` and `stdout()` specially.
 
   Args:
     tables (list of str): list of table definitions from YAML schema
@@ -222,6 +284,7 @@ def preload_rules_into_bootstrap(spec):
   """convert preload
   """
   retval = ""
+  i = 0
   for tabname in spec['preload'].keys():
     # ruledef = tabname + " <= lra::make_iterable(&" + make_collection_name(tabname) + ")"
     ruledef = tabname + " <= " + make_collection_name(tabname) + ';'
@@ -230,66 +293,60 @@ def preload_rules_into_bootstrap(spec):
     spec['bootstrap'][tabname + "_boot"] = ruledef
   return retval
 
-def convert_mtype(m):
-  if m == '<+':
-    return '+='
-  elif m == '<-':
-    return '-='
-  else:
-    return '<='
+# def convert_mtype(m):
+#   if m == '<+':
+#     return '+='
+#   elif m == '<-':
+#     return '-='
+#   else:
+#     return '<='
 
-def input_schema(op):
-  return "GET SCHEMA IN HERE"
+# def translate_chain(ast, collection_wrap):
+#   return ' | '.join([translate_op(o, collection_wrap) for o in ast])
 
-def translate_chain(ast, collection_wrap):
-  return ' | '.join([translate_op(o, collection_wrap) for o in ast if isinstance(o, tatsu.ast.AST)])
+# def translate_op(op, collection_wrap):
+#   opname = op.opname
+#   if opname == 'cross':
+#     opname = 'make_cross'
+#   elif opname == 'where':
+#     opname = 'filter'
+#   retval = 'lra::' + opname
+#   if not op.plist == None:
+#     retval += '<' + ''.join(o for o in op.plist) + '>'
+#   retval += '('
+#   if op.op_args != None:
+#     retval += translate_op_args(op.op_args, collection_wrap)
+#   retval += ')'
+#   return retval
 
-def translate_op(op, collection_wrap):
-  opname = op.opname
-  if opname == 'cross':
-    opname = 'make_cross'
-  elif opname == 'where':
-    opname = 'filter'
-  retval = 'lra::' + opname
-  if not op.plist == None:
-    retval += '<' + ''.join(o for o in chain.from_iterable(op.plist.params)) + '>'
-  retval += '('
-  if op.op_args != None:
-    retval += translate_op_args(op.op_args, collection_wrap)
-  retval += ')'
-  return retval
+# def wrap_collection(c, collection_wrap): 
+#   return 'lra::' + collection_wrap + '(&' + c + ')'
 
-def wrap_collection(c, collection_wrap): 
-  return 'lra::' + collection_wrap + '(&' + c + ')'
+# def translate_op_args(args, collection_wrap):
+#   retval = ''
+#   if type(args) == list:
+#     retval += ', '.join(wrap_collection(a, collection_wrap) for a in args)
+#   elif args.code != None:
+#     retval += '[&]'
+#     retval += '(const '
+#     retval += 'auto'
+#     retval += '& ' + args.argname + ')'
+#     retval += args.code.code  
+#   return retval
 
-def translate_op_args(args, collection_wrap):
-  retval = ''
-  if args.code != None:
-    retval += '[&]'
-    retval += '(const '
-    # retval += std::tuple<'
-    # retval += input_schema(op)
-    # retval += '>'
-    retval += 'auto'
-    retval += '& ' + args.argname + ')'
-    retval += args.code.code
-  elif args.catitem != None:
-    retval += ', '.join(wrap_collection(a, collection_wrap) for a in args.catitem)
-  return retval
-
-def expand_ruledict(r, collection_wrap):
-  retval = r.lhs + ' ' + convert_mtype(r.mtype) + ' ('
-  if r.rhs.anchor != None:
-    retval += wrap_collection(r.rhs.anchor, collection_wrap)
-    if r.rhs.chain != None:
-      retval += ' | '
-  if r.rhs.chain != None:
-    retval += translate_chain(r.rhs.chain, collection_wrap)
-  # pprint.pprint(r.rhs.chain)
-  # if not r.rhs.chain == None:
-  #   retval += (' | ').join(translate_op(op) for op in r.rhs.chain)
-  retval += ')'
-  return retval
+# def expand_ruledict(r, collection_wrap):
+#   retval = r.lhs + ' ' + convert_mtype(r.mtype) + ' ('
+#   if r.rhs.anchor != None:
+#     retval += wrap_collection(r.rhs.anchor, collection_wrap)
+#     if r.rhs.chain != None:
+#       retval += ' | '
+#   if r.rhs.chain != None:
+#     retval += translate_chain(r.rhs.chain, collection_wrap)
+#   # pprint.pprint(r.rhs.chain)
+#   # if not r.rhs.chain == None:
+#   #   retval += (' | ').join(translate_op(op) for op in r.rhs.chain)
+#   retval += ')'
+#   return retval
 
 def translate_rules(rules, collection_wrap):
   """convert YAML version of rules into Fluent C++
@@ -307,10 +364,11 @@ def translate_rules(rules, collection_wrap):
   """
   retval = ''
   for k, v in rules.items():
-    grammar = open('./fluent.ebnf').read()
-    ruledict = tatsu.parse(grammar, v, parseinfo=True)
-    v = expand_ruledict(ruledict, collection_wrap)
-    retval += ("      auto " + k + " = " + v + ';\n')
+    grammar = open('./fluent.tatsu').read()
+    sem = BloomSemantics();
+    setattr(sem, "cwrap", collection_wrap)
+    v = tatsu.parse(grammar, k +': ' + v, parseinfo=True, semantics=sem)
+    retval += ("      auto " + v)
   retval += ("      return std::make_tuple(" + ",".join(rules.keys()) + ");\n")
   return retval
 
@@ -416,7 +474,7 @@ def codegen(specFile):
     lines.append("      using namespace fluent::infix;\n")
     lines.append('\n      ////////////////////////\n')
     lines.append('      // Bloom Bootstrap Rules\n')
-    lines.append(translate_rules(spec['bootstrap'], 'make_iterable'))
+    lines.append(translate_rules(spec['bootstrap'], 'lra::make_iterable'))
     lines.append('      ////////////////////////\n')
     lines.append("    })\n")
     lines.append(';\n')
@@ -431,7 +489,7 @@ def codegen(specFile):
     lines.append("      using namespace fluent::infix;\n")
     lines.append('\n      //////////////\n')
     lines.append('      // Bloom Rules\n')
-    lines.append(translate_rules(spec['bloom'], 'make_collection'))
+    lines.append(translate_rules(spec['bloom'], 'lra::make_collection'))
     lines.append('      //////////////\n')
     lines.append("    })\n")
 
