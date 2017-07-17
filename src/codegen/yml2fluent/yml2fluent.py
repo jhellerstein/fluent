@@ -66,21 +66,108 @@ import tempfile
 from sys import stdout
 from collections import defaultdict,OrderedDict
 import pprint
+import string
 import tatsu
 
 class BloomSemantics(object):
   """docstring for BloomSemantics"""
+
+  schema = {}
+  rules = {}
+  tups = {}
+  tupbuf = []
+
+  def start(self, ast):
+    args = { i[0]: i[1] for i in ast.args}
+
+    # args
+    retval = fluent_prologue(ast.name, args)
+
+    # schema
+    retval += '''
+    ///////////////
+    // Bloom Schema
+'''
+    retval += '\n'.join(('    .' + l) for l in translate_schema(self.schema))
+    retval += '''
+    ///////////////
+    ;
+'''
+
+    # constant tuples
+    for k in self.tups.keys():
+      # first the type
+      retval += '  using ' + k + '_tuple_t = std::tuple<'
+      retval += ', '.join(v for _,v in self.schema[k]['cols'].items())
+      retval += '>;\n'
+      # then the constant collection
+      retval += '  std::vector<' + k + '_tuple_t> ' + k + '_tuples = {\n'
+      retval += (';\n'.join('    std::make_tuple(' + ', '.join(a.strip() for a in tup) + ')' for tup in self.tups[k]))
+      retval += ';\n  };\n'
+
+    # bootstrap logic
+    retval += self.register_rules('Bootstrap', ast.blogic)
+    # bloom logic
+    retval += self.register_rules('', ast.logic)
+
+    # epilogue
+    retval += fluent_epilogue(ast.name)
+    return retval
+
+  def register_rules(self, bootp, rules):
+    if rules == None or len(rules) == 0:
+      return ''
+
+    retval = "  bloom = std::move(bloom)\n"
+    retval += "    .Register" + bootp + "Rules([&]("
+    retval += ", ".join(('auto& ' + k) for k in self.schema.keys())
+    retval += ") {\n"
+    retval += "\n".join('      (void)' + l + ';' for l in self.schema.keys())
+    retval += '''
+      using namespace fluent::infix;
+
+      //////////////
+      // Bloom ''' + bootp + ''' Rules
+'''
+    retval += rules
+    retval += '      return std::make_tuple('
+    retval += ", ".join(self.rules.keys()) + ');\n'
+    retval += '''      //////////////
+    })
+'''
+    return retval
+
+
   def logic(self, ast):
     return ''.join(ast)
 
+  def stmt(self, ast):
+    if ast != '':
+      return '      ' + ast + ';\n'
+    else:
+      return ast
+
   def ruledef(self, ast):
-    return ast.var + " = " + ast.rule + ';\n'
+    self.rules[ast.var] = ast.rule
+    return "auto " + ast.var + " = " + ast.rule     
 
   def rule(self, ast):
-    return ast.lhs + ' ' + ast.mtype + ' ' + ast.rhs
+    if ast.rhs == None:
+      self.tups[ast.lhs] = self.tupbuf
+      self.tupbuf = []
+      rhs = 'lra::make_iterable(&' + ast.lhs + '_tuples)'
+    else:
+      rhs = ast.rhs
+    return ast.lhs + ' ' + ast.mtype + ' ' + rhs
 
   def catalog_entry(self, ast, type):
-    return(''.join(ast))
+    retval = (''.join(ast))
+    if (retval == 'stdin'):
+      return 'fluin'
+    elif (retval == 'stdout'):
+      return 'fluout'
+    else:
+      return retval
 
   def rhs(self, ast):
     retval = "("
@@ -90,6 +177,10 @@ class BloomSemantics(object):
         retval += ' | '
     if ast.chain != None:
       retval += ' | '.join(ast.chain)
+    if ast.tups != None:
+      self.tupbuf = ast.tups
+      return None
+
     return retval + ")"
     
   def op(self, ast):
@@ -131,6 +222,21 @@ class BloomSemantics(object):
 
   def delete(self, ast):
     return "-="  
+
+  def schemadef(self, ast):
+    if ast.name == 'stdin':
+      self.schema['fluin'] = None;
+    elif ast.name == 'stdout':
+      self.schema['fluout'] = None;
+    else:
+      collection_type = ast.type
+      collection_name = ast.name
+      cols = { i[0]: i[1] for i in ast.cols}
+      self.schema[collection_name] = {
+        'type': collection_type,
+        'cols': cols
+      }
+    return ""
 
 # https://stackoverflow.com/a/21912744/7333257
 def ordered_load(stream, Loader=yaml.Loader, object_pairs_hook=OrderedDict):
@@ -182,7 +288,7 @@ struct ''' + name + '''Args {
 int ''' + name + '''Main(const ''' + name + '''Args& args) {
   zmq::context_t context(1);
   fluent::lineagedb::ConnectionConfig connection_config;
-  auto fb = fluent::fluent<fluent::lineagedb::NoopClient,fluent::Hash,
+  auto bloom = fluent::fluent<fluent::lineagedb::NoopClient,fluent::Hash,
                            fluent::lineagedb::ToSql,fluent::MockPickler,
                            std::chrono::system_clock>
                            ("'''
@@ -190,7 +296,7 @@ int ''' + name + '''Main(const ''' + name + '''Args& args) {
                                     args.address, &context,
                                     connection_config)
     .ConsumeValueOrDie();
-  auto schema = std::move(fb)
+  bloom = std::move(bloom)
 '''
   return retval
 
@@ -404,9 +510,11 @@ def translate_schema(sdict):
   """
   result = []
   for name, defn in sdict.items():
-    if (name == 'stdin' or name == 'stdout'):
-      result.append(name + '()')
-      # we ignore the definition for stdin and stdout
+    # we ignore the definition for stdin and stdout
+    if (name == 'fluin'):
+      result.append('stdin' + '()')
+    elif name == 'fluout':
+      result.append('stdout' + '()')
     else:
       collection_type = defn['type']
       collection_name = name
@@ -480,8 +588,8 @@ def codegen(specFile):
     lines.append(';\n')
     lastvar = "bootstrap"
 
-  lines.append("  auto bloom = std::move(" + lastvar + ")\n")
   if ('bloom' in spec):
+    lines.append("  bloom = std::move(" + lastvar + ")\n")
     lines.append("    .RegisterRules([&](")
     lines.append(arglist_tablenames(schema))
     lines.append(") {\n")
@@ -495,6 +603,24 @@ def codegen(specFile):
 
   lines.append(fluent_epilogue(spec['name']))
   return "".join(lines)
+
+def fullparse(specFile):
+  """convert Bloom spec to a Fluent C++ header file
+
+  Args:
+    specFile (str): path to the .yml file
+
+  Returns:
+    text of the C++ file
+  """
+  spec = open(specFile).read()
+  grammar = open('./fluent2.tatsu').read()
+  sem = BloomSemantics();
+  setattr(sem, "cwrap", "")
+  parser = tatsu.compile(grammar)
+  retval = parser.parse(spec, semantics=sem)
+
+  return retval
 
 if __name__ == "__main__":
   parser = argparse.ArgumentParser("Generate Fluent C++ code from YAML spec.")
@@ -511,5 +637,6 @@ if __name__ == "__main__":
   else:
     codeFd = open(args.out, "w")
 
-  codeFd.write(codegen(args.spec))
+  result = fullparse(args.spec)
+  codeFd.write(result)
   codeFd.close()

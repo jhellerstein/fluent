@@ -2,13 +2,20 @@
 
 # start = [schema] [bootstrap] [logic] $ ;
 
-start = @:logic ';' $ ;
+start = namedef rules $ ;
+
+namedef = 'name' ':' @:name;
+
+name = /\w+/;
+
+rules = @:logic ';';
 
 logic 
 #    = ';'%{@+:ruledef}+ ;
    =
    | @:ruledef ';' @:logic
    | ruledef
+   | schemadef
    ;
 
 ruledef = var:rulename ':' rule:rule ;
@@ -83,3 +90,18 @@ lang =
     | 'Python'
     | 'python'
     ;
+
+schemadef = @:coll_type @:catalog_entry '(' @+:attrs ')' ';' ;
+
+coll_type =
+    | 'table'
+    | 'channel'
+    | 'scratch'
+    | 'interface'
+    ;
+
+attrs = @:attrname ':' type;
+
+attrname::string = /\w+/ ;
+
+type = /\w+/ ;
