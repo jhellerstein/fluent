@@ -1,0 +1,8 @@
+r1: mcast <= fluin.map(line ```c++
+              {
+                return std::make_tuple(args.server_address,
+                                       std::get<0>(line));
+              }```);
+r2: fluout <= mcast.project<1>();
+subscribe: nodelist <= connect.project<1, 2>();
+multicast: mcast <= cross(mcast, nodelist).project<2, 1>();
